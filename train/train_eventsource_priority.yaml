@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: webhook-train-model-priority
+  namespace: argo
+spec:
+  service:
+    ports:
+    - port: 8088
+      targetPort: 8088
+  webhook: 
+    webhook-train-model-priority:
+      endpoint: /trainpriority
+      method: POST
+      port: "8088"
+      url: ""

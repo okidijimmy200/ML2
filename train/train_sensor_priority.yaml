@@ -1,0 +1,205 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: webhook-train-model-priority
+  namespace: argo
+spec:
+  dependencies:
+    - name: train-model-dependency
+      eventSourceName: webhook-train-model-priority
+      eventName: webhook-train-model-priority
+  triggers:
+    - template:
+        name: webhook-workflow-trigger
+        k8s:
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.11, pipelines.kubeflow.org/pipeline_compilation_time: '2022-05-10T00:01:34.309876',
+                  pipelines.kubeflow.org/pipeline_spec: '{"description": "train and sample report
+                    generator", "inputs": [{"name": "user_id"}, {"name": "train_id"}, {"name": "raw_data_filename"},
+                    {"name": "json_filename"}, {"name": "get_sample_report"}], "name": "betterdata
+                    synthetic pipeline"}'}
+                labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.11}
+                name: my-workflow-
+                namespace: argo
+              spec:
+                entrypoint: betterdata-synthetic-pipeline
+                podPriorityClassName: high-priority-nonpreempting
+                priority: 100
+                onExit: exit-handler
+                templates:
+                - name: betterdata-synthetic-pipeline
+                  inputs:
+                    parameters:
+                    - {name: get_sample_report}
+                    - {name: json_filename}
+                    - {name: raw_data_filename}
+                    - {name: train_id}
+                    - {name: user_id}
+                    - {name: minio_creds}
+                  dag:
+                    tasks:
+                    - name: condition-1
+                      template: condition-1
+                      when: '"{{inputs.parameters.get_sample_report}}" == "True"'
+                      dependencies: [train-model]
+                      arguments:
+                        parameters:
+                        - {name: json_filename, value: '{{inputs.parameters.json_filename}}'}
+                        - {name: raw_data_filename, value: '{{inputs.parameters.raw_data_filename}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: user_id, value: '{{inputs.parameters.user_id}}'}
+                        - {name: minio_creds, value: '{{inputs.parameters.minio_creds}}'}
+                    - name: train-model
+                      template: train-model
+                      arguments:
+                        parameters:
+                        - {name: json_filename, value: '{{inputs.parameters.json_filename}}'}
+                        - {name: raw_data_filename, value: '{{inputs.parameters.raw_data_filename}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: user_id, value: '{{inputs.parameters.user_id}}'}
+                        - {name: minio_creds, value: '{{inputs.parameters.minio_creds}}'}
+                - name: condition-1
+                  inputs:
+                    parameters:
+                    - {name: json_filename}
+                    - {name: raw_data_filename}
+                    - {name: train_id}
+                    - {name: user_id}
+                    - {name: minio_creds}
+                  dag:
+                    tasks:
+                    - name: sample-report-gen
+                      template: sample-report-gen
+                      arguments:
+                        parameters:
+                        - {name: json_filename, value: '{{inputs.parameters.json_filename}}'}
+                        - {name: raw_data_filename, value: '{{inputs.parameters.raw_data_filename}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: user_id, value: '{{inputs.parameters.user_id}}'}
+                        - {name: minio_creds, value: '{{inputs.parameters.minio_creds}}'}
+                - name: sample-report-gen
+                  container:
+                    command: [python, report_gen.py, --user_id, '{{inputs.parameters.user_id}}',
+                      --train_id, '{{inputs.parameters.train_id}}', --raw_data_filename, '{{inputs.parameters.raw_data_filename}}',
+                      --json_filename, '{{inputs.parameters.json_filename}}', --minio_creds, '{{inputs.parameters.minio_creds}}']
+                    image: localhost:5000/sample_report_v1
+                    imagePullPolicy: IfNotPresent
+                  inputs:
+                    parameters:
+                    - {name: json_filename}
+                    - {name: raw_data_filename}
+                    - {name: train_id}
+                    - {name: user_id}
+                    - {name: minio_creds}
+                  metadata:
+                    labels:
+                      pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                      pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                      pipelines.kubeflow.org/enable_caching: "true"
+                - name: train-model
+                  container:
+                    command: [python, main.py, --user_id, '{{inputs.parameters.user_id}}', --train_id,
+                      '{{inputs.parameters.train_id}}', --raw_data_filename, '{{inputs.parameters.raw_data_filename}}',
+                      --json_filename, '{{inputs.parameters.json_filename}}', --minio_creds, '{{inputs.parameters.minio_creds}}']
+                    image: localhost:5000/model_train_v6
+                    imagePullPolicy: IfNotPresent
+                  inputs:
+                    parameters:
+                    - {name: json_filename}
+                    - {name: raw_data_filename}
+                    - {name: train_id}
+                    - {name: user_id}
+                    - {name: minio_creds}
+
+                - name: exit-handler
+                  steps:
+                  - - name: notify
+                      template: updateMySQL
+                      when: "{{workflow.status}} == Succeeded"
+                - name: updateMySQL
+                  script:
+                    image: shamiulshifat/python-mysql-minio
+                    command: [python]
+                    source: |
+                      import sqlalchemy as db
+                      import sqlalchemy
+                      from sqlalchemy import create_engine
+                      from sqlalchemy.sql import text
+                      engine = db.create_engine('{{workflow.parameters.mysql_creds}}')
+                      #engine = db.create_engine('mysql+pymysql://betterdata:123456@34.131.131.97:3306/betterdata')
+                      connection = engine.connect()
+                      metadata = db.MetaData()
+                      model_data = db.Table('model_data', metadata, autoload=True, autoload_with=engine)
+                      #update database
+                      user_id={{workflow.parameters.user_id}}
+                      train_id={{workflow.parameters.train_id}}
+                      with engine.connect() as con:
+                          statement = text("""
+                          UPDATE model_data
+                          SET status='Completed'
+                          WHERE user_id=int(user_id) AND train_id=int(train_id);
+                          """)
+                          con.execute(statement)
+                      print("status updated")  
+                metadata:
+                  labels:
+                    pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                    pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                    pipelines.kubeflow.org/enable_caching: "true"
+                arguments:
+                  parameters:
+                  - {name: raw_data_filename}
+                  - {name: user_id}
+                  - {name: json_filename}
+                  - {name: train_id}
+                  - {name: get_sample_report}
+                  - {name: minio_creds}
+                  - {name: mysql_creds}
+                
+              
+
+          operation: create
+          parameters:
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.raw_data_filename
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.user_id
+              dest: metadata.name
+              operation: append
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.user_id
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.json_filename
+              dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.train_id
+              dest: metadata.name
+              operation: append
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.train_id
+              dest: spec.arguments.parameters.3.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.get_sample_report
+              dest: spec.arguments.parameters.4.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.minio_creds
+              dest: spec.arguments.parameters.5.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.mysql_creds
+              dest: spec.arguments.parameters.6.value
+            

@@ -1,0 +1,9 @@
+FROM python:3.7-slim
+
+WORKDIR /app
+
+RUN pip install minio requests
+
+COPY . .
+
+ENTRYPOINT [ "python", "report_gen.py" ]

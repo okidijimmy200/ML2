@@ -1,0 +1,1 @@
+{"problem_type": {"Classification": "income"}, "epochs": 1, "save_weights": true, "save_frequency": 1, "save_path": "./model_artificats", "mixed_columns": {}, "log_columns": [], "model_name": "model"}

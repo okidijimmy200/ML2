@@ -1,0 +1,41 @@
+for training:
+
+import requests
+
+headers = {
+    'accept': 'application/json',
+}
+
+params = (
+    ('user_id', '1234'),
+    ('train_id', '1'),
+    ('raw_data_filename', 'train.csv'),
+    ('json_filename', 'params1.json'),
+    ('get_sample_report', 'false'),
+    ('set_priority', 'false'),
+    ('minio_creds', '10.1.54.248:9000,admin,password'),
+    ('mysql_creds', 'betterdata:123456@34.131.131.97:3306/betterdata'),
+)
+
+response = requests.get('http://0.0.0.0:8000/train', headers=headers, params=params)
+--------------------------------------------------------------------
+
+for inference/deploy:
+
+import requests
+
+headers = {
+    'accept': 'application/json',
+}
+
+params = (
+    ('raw_data_filename', 'train.csv'),
+    ('user_id', '1234'),
+    ('train_id', '1'),
+    ('gen_id', '1'),
+    ('num_rows', '50'),
+    ('minio_creds', '10.1.54.248:9000,admin,password'),
+    ('mysql_creds', 'mysql+pymysql://betterdata:123456@34.131.131.97:3306/betterdata'),
+)
+
+response = requests.get('http://0.0.0.0:8000/deploy', headers=headers, params=params)

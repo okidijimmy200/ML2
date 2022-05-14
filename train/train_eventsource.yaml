@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: webhook-train-model
+  namespace: argo
+spec:
+  service:
+    ports:
+    - port: 8085
+      targetPort: 8085
+  webhook: 
+    webhook-train-model:
+      endpoint: /train
+      method: POST
+      port: "8085"
+      url: ""

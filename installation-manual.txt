@@ -1,0 +1,205 @@
+
+#######################  Installation Manual ######################################
+
+#unzip the folder "client-pack" and open the it, then open a terminal from the root directory of the folder:
+
+
+                                                                        #Install MicroK8s
+
+>sudo apt-get update
+>sudo snap install microk8s --classic --channel=1.21
+
+>sudo usermod -a -G microk8s $USER
+>sudo chown -f -R $USER ~/.kube
+
+>su - $USER
+
+#check
+>microk8s status --wait-ready
+
+>sudo microk8s enable dashboard
+
+
+                                                                    ########## microk8s installed
+
+
+
+                                                                          # install DOCKER ########
+
+>microk8s enable dns
+
+# install docker
+>sudo apt-get remove docker docker-engine docker.io containerd runc
+
+>sudo apt-get update
+
+>sudo apt-get install \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+>curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+>echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+>sudo apt-get update
+
+>sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# check if docker installed properly
+
+>sudo docker run hello-world
+
+
+                                                                              #### docker installed
+
+#now we have to install a local docker repo:
+
+>sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2
+
+
+                                                                      ### argo installation starts ##########
+
+>sudo microk8s kubectl create ns argo
+
+## install latest argo
+>sudo microk8s kubectl apply -n argo -f https://raw.githubusercontent.com/argoproj/argo-workflows/master/manifests/quick-start-postgres.yaml
+
+# wait 15-20 minutes and check on kubernetes dashboard on "argo" namespace whether all pods are running or not!
+
+#you can check:
+
+>sudo microk8s kubectl get pods -n argo
+
+## now deploy some argo configs
+
+
+>sudo microk8s kubectl apply -f https://raw.githubusercontent.com/shamiulshifat/Argo-on-Microk8s/main/service-account.yaml -n argo
+>sudo microk8s kubectl apply -f https://raw.githubusercontent.com/shamiulshifat/Argo-on-Microk8s/main/workflow-servoce-account.yaml -n argo
+
+>sudo microk8s kubectl create ns argo-events
+
+# Install Argo Events
+
+>sudo microk8s kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-events/stable/manifests/install.yaml
+
+# Deploy the Event Bus
+
+>sudo microk8s kubectl apply -n argo-events -f https://raw.githubusercontent.com/argoproj/argo-events/stable/examples/eventbus/native.yaml
+
+#again deploy for argo namespace
+
+>sudo microk8s kubectl apply -n argo -f https://raw.githubusercontent.com/argoproj/argo-events/stable/examples/eventbus/native.yaml
+
+
+# deploy priority class
+>sudo microk8s kubectl apply -f https://raw.githubusercontent.com/shamiulshifat/argo-practice/main/setpriority.yaml -n argo
+
+
+                                                            ######## argo installed ###############################
+
+
+                                                           ---------------------------------------------------------
+# lets deploy workflow files on argo
+						############################now for train_priority_api:#################
+
+# open a terminal within "client-pack" folder and paste the cmd:
+>sudo microk8s kubectl apply -f ./train/train_sensor.yaml -n argo 
+>sudo microk8s kubectl apply -f ./train/train_eventsource.yaml -n argo 
+
+
+# enter cmd on terminal for normal workflow
+> newgrp microk8s
+>sudo microk8s kubectl -n argo port-forward $(microk8s kubectl -n argo get pod -l eventsource-name=webhook-train-model -o name) 8085:8085 &
+---------------------------------------------------
+#dont close this terminal, it will be needed to be opened.
+# click "+" on top right of the terminal and which will open a new terminal tab under sme directory 
+#
+now for train_priority_api:
+##now have to update train sensor yaml code with proper mysql config provided by software team
+
+# go to terminal and paste the cmd:
+
+>sudo microk8s kubectl apply -f ./train/train_sensor_priority.yaml -n argo --validate=false
+
+>sudo microk8s kubectl apply -f ./train/train_eventsource_priority.yaml -n argo --validate=false
+
+
+>sudo microk8s kubectl -n argo port-forward $(sudo microk8s kubectl -n argo get pod -l eventsource-name=webhook-train-model-priority -o name) 8088:8088 &
+
+#dont close this terminal, it will needed to be opened.
+# click "+" on top right of the terminal and which will open a new terminal tab under same directory 
+#
+
+##
+
+# now create docker image of train model and push to local repo:
+
+>cd ./train/image/
+
+>sudo docker image build -t model_train_v6 .
+>sudo docker tag model_train_v6 localhost:5000/model_train_v6
+>sudo docker push localhost:5000/model_train_v6
+
+> cd -
+# now create and push another docker image for sample report generation
+>cd ./sample_report_gen/
+
+>sudo docker image build -t sample_report_v1 .
+>sudo docker tag sample_report_v1 localhost:5000/sample_report_v1
+>sudo docker push localhost:5000/sample_report_v1
+
+> cd -
+
+# to be sure, everythin is deployed:
+>sudo microk8s kubectl get pods -n argo
+#you can see all sensor pods running!
+
+						############################### now for deploy(inference) api ############
+# now create docker image of inference model and push to local repo:
+
+>cd ./deploy/image/
+
+>sudo docker image build -t model_deploy_v2 .
+>sudo docker tag model_deploy_v2 localhost:5000/model_deploy_v2
+>sudo docker push localhost:5000/model_deploy_v2
+
+> cd -
+
+# now to deploy sensor and event source for inference/deploy model:
+
+>sudo microk8s kubectl apply -f ./deploy/gen_sensor.yaml -n argo --validate=false
+
+>sudo microk8s kubectl apply -f ./deploy/gen_eventsource_priority.yaml -n argo --validate=false
+
+>microk8s kubectl -n argo port-forward $(microk8s kubectl -n argo get pod -l eventsource-name=webhook-gen-model -o name) 8086:8086 &
+#dont close this terminal, it will needed to be opened.
+# click "+" on top right of the terminal and which will open a new terminal tab under same directory 
+#
+
+
+---------------------------------------------------------- # train, inference, metrics apis deployed successfully # ----------------------
+#[for software team]
+#now deploy first api server
+
+>pip install -r requirements.txt
+
+>uvicorn fast_api_deployment:app --host 0.0.0.0 --port 8000 --reload &
+
+#[for software team]
+# now workflow api can be accessed from localhost:8000/docs
+#see firstapi_doc for instructions 
+
+
+
+
+
+
+
+
+
+
+
